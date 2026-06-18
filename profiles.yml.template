@@ -1,0 +1,41 @@
+# profiles.yml
+#
+# IMPORTANT: this file does NOT live in the project repo.
+# Copy this to ~/.dbt/profiles.yml on your actual machine and fill in real values.
+# Never commit a profiles.yml with real credentials to GitHub.
+#
+# env_var() reads from your shell environment at runtime, so you set these
+# once in your terminal (or a .env file you source) and dbt picks them up
+# without the secret ever touching a file that gets pushed to git:
+#
+#   export SNOWFLAKE_ACCOUNT="xy12345.us-east-1"
+#   export SNOWFLAKE_USER="jimin"
+#   export SNOWFLAKE_PASSWORD="..."
+
+gh_archive:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: TRANSFORMER
+      database: GH_ARCHIVE
+      warehouse: COMPUTE_WH
+      schema: dbt_jimin_dev
+      threads: 4
+      client_session_keep_alive: false
+
+    # A separate target for CI / prod once the pipeline is live.
+    # Switch with: dbt run --target prod
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: TRANSFORMER
+      database: GH_ARCHIVE
+      warehouse: COMPUTE_WH
+      schema: analytics
+      threads: 8

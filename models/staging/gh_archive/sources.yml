@@ -1,0 +1,44 @@
+version: 2
+
+sources:
+  - name: gh_archive
+    description:  "Raw GitHub Events landed hourly by Lambda + EventBridge from GH Archive (gharchive.org), staged through S3 into Snowflake."
+    database: GH_ARCHIVE
+    schema: RAW
+    loaded_at_field: created_at
+
+    # Lambda runs on an hourly EventBridge schedule. If a load is more than
+    # 2 hours late, something in the pipeline likely stalled - worth a look.
+    # 6 hours late means the schedule has very likely broken and needs fixing.
+    freshness:
+      warn_after: {count: 2, period: hour}
+      error_after: {count: 6, period: hour}
+
+    tables:
+      - name: raw_events
+        description: "One row per GitHub event (PushEvent, WatchEvent, PullRequestEvent, IssuesEvent, ForkEvent, etc). Schema matches the public GH Archive hourly JSON export."
+        columns:
+          - name: id
+            description: "Unique GitHub event ID"
+            tests:
+              - unique
+              - not_null
+
+          - name: type
+            description: "Event type, e.g. PushEvent, WatchEvent, PullRequestEvent"
+            tests:
+              - not_null
+
+          - name: actor
+            description: "VARIANT JSON object - the GitHub user who triggered the event"
+
+          - name: repo
+            description: "VARIANT JSON object - the repository the event occurred on"
+
+          - name: payload
+            description: "VARIANT JSON object - event-specific details (varies by type)"
+
+          - name: created_at
+            description: "Timestamp the event occurred on GitHub"
+            tests:
+              - not_null

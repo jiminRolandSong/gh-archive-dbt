@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: int_repo_daily_stats
+    description: "Daily aggregated stats per repository. Ephemeral - never materialized directly, inlined as CTE into mart models."
+    columns:
+      - name: surrogate_key
+        description: "Hash of repo_id + date_day. Unique per repo per day."
+        tests:
+          - unique
+          - not_null
+      - name: repo_id
+        description: "GitHub repository ID"
+        tests:
+          - not_null
+      - name: star_count
+        description: "WatchEvents received on date_day"
+      - name: fork_count
+        description: "ForkEvents received on date_day"
+      - name: unique_contributors
+        description: "Distinct actors who triggered any event on date_day"
+
+  - name: int_developer_activity
+    description: "Daily aggregated activity per developer. Ephemeral - inlined as CTE into mart models."
+    columns:
+      - name: surrogate_key
+        description: "Hash of actor_id + date_day. Unique per developer per day."
+        tests:
+          - unique
+          - not_null
+      - name: actor_id
+        description: "GitHub user ID"
+        tests:
+          - not_null
+      - name: code_contribution_ratio
+        description: "code_contributions / total_events. Null if total_events = 0."

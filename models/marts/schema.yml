@@ -1,0 +1,54 @@
+version: 2
+
+models:
+  - name: mart_trending_repos
+    description: "Top 100 trending GitHub repositories per day, ranked by 7-day rolling star count. Primary output for Looker Studio dashboard and Claude API trend analysis."
+    columns:
+      - name: repo_id
+        description: "GitHub repository ID"
+        tests:
+          - not_null
+      - name: repo_name
+        description: "Full repository name (owner/repo)"
+        tests:
+          - not_null
+      - name: date_day
+        description: "Date of activity"
+        tests:
+          - not_null
+      - name: rolling_7d_stars
+        description: "Total stars received in the 7-day window ending on date_day"
+      - name: trending_rank
+        description: "Rank within date_day, ordered by rolling_7d_stars descending. Top 100 only."
+
+  - name: mart_contributor_retention
+    description: "Monthly cohort retention matrix for GitHub contributors. Each row = one cohort_month x activity_month combination. Used for contributor growth analysis."
+    columns:
+      - name: cohort_month
+        description: "Month the contributor was first seen on GitHub"
+        tests:
+          - not_null
+      - name: months_since_first
+        description: "Number of months since cohort_month (0 = same month as first seen)"
+      - name: cohort_size
+        description: "Total unique contributors first seen in cohort_month"
+      - name: retained_contributors
+        description: "Unique contributors from the cohort still active in activity_month"
+      - name: retention_rate
+        description: "retained_contributors / cohort_size"
+
+  - name: mart_language_trends
+    description: "Daily event category breakdown across all GitHub activity. Feeds Claude API for trend insight generation."
+    columns:
+      - name: date_day
+        description: "Date of activity"
+        tests:
+          - not_null
+      - name: event_category
+        description: "Activity category (code, star, fork, issue, release, repo_activity, community, wiki)"
+        tests:
+          - not_null
+      - name: event_count
+        description: "Total events in this category on date_day"
+      - name: wow_growth_rate
+        description: "Week-over-week growth rate vs same category 7 days prior. Null for first 7 days."

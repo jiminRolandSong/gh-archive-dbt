@@ -1,0 +1,13 @@
+
+target/
+dbt_packages/
+dbt_modules/
+logs/
+.user.yml
+
+# never let a real profiles.yml get committed by accident
+profiles.yml
+!profiles.yml.template
+
+.env
+*.json.gz 

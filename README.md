@@ -1,0 +1,190 @@
+# gh-archive-dbt
+
+A production dbt project that transforms hourly GitHub event data from [GH Archive](https://www.gharchive.org/) into trending repository rankings, contributor retention cohorts, and activity trend analysis, running on Snowflake.
+
+---
+
+## Project Overview
+
+GH Archive records every public GitHub event — pushes, stars, forks, pull requests, issues, releases — at hourly granularity. This project ingests that raw firehose, deduplicates and lightly types it, then builds three analytical mart tables consumed by Looker Studio dashboards, a Streamlit app, and (planned) a Claude API insight generator.
+
+**What it produces:**
+
+| Mart | Description |
+|------|-------------|
+| `mart_trending_repos` | Top 100 repositories per day ranked by 7-day rolling star count |
+| `mart_contributor_retention` | Monthly cohort retention matrix — how many first-time contributors return month over month |
+| `mart_language_trends` | Daily event category breakdown with week-over-week growth rates |
+
+---
+
+## Architecture
+
+```
+                        ┌─────────────────────────────────────────────────────────┐
+                        │                    Orchestration                        │
+                        │              Airflow  (planned)                         │
+                        └──────────────────────┬──────────────────────────────────┘
+                                               │
+ ┌────────────────┐    ┌──────────────┐    ┌──┴───────┐    ┌───────┐    ┌─────────────────┐
+ │   GH Archive   │───▶│ AWS Lambda + │───▶│    S3    │───▶│ Snow- │───▶│      dbt        │
+ │ gharchive.org  │    │ EventBridge  │    │  (raw)   │    │ flake │    │  (this project) │
+ │ ~40k events/hr │    │ (hourly)     │    │          │    │  RAW  │    │                 │
+ └────────────────┘    └──────────────┘    └──────────┘    └───────┘    └────────┬────────┘
+                                                                                  │
+                              ┌───────────────────────────────────────────────────┤
+                              │                                                   │
+                     ┌────────┴────────┐                               ┌──────────┴────────┐
+                     │   Claude API    │                               │   Looker Studio   │
+                     │ (insight gen.)  │                               │   + Streamlit     │
+                     │   (planned)     │                               │   (dashboards)    │
+                     └─────────────────┘                               └───────────────────┘
+```
+
+**Data flow within dbt:**
+
+```
+RAW.raw_events
+    └── stg_gh_events          (incremental, deduped)
+            ├── int_repo_daily_stats      (ephemeral CTE)
+            │       └── mart_trending_repos        (table)
+            └── int_developer_activity   (ephemeral CTE)
+                    ├── mart_contributor_retention  (table)
+                    └── mart_language_trends        (table)
+```
+
+---
+
+## Project Structure
+
+```
+gh_archive/
+├── dbt_project.yml                         # Project config and materialization defaults
+├── packages.yml                            # dbt_utils 1.3.0 dependency
+├── package-lock.yml                        # Pinned package hash
+├── profiles.yml.template                   # Safe-to-commit credential template (no secrets)
+│
+├── macros/
+│   ├── get_event_category.sql              # Maps 16 raw event types to 8 semantic categories
+│   └── safe_divide.sql                     # NULL-safe division (avoids divide-by-zero)
+│
+├── models/
+│   ├── staging/
+│   │   └── gh_archive/
+│   │       ├── sources.yml                 # Source definition with freshness SLAs
+│   │       ├── schema.yml                  # stg_gh_events column tests and docs
+│   │       └── stg_gh_events.sql           # Incremental dedup of raw GitHub events
+│   │
+│   ├── intermediate/
+│   │   ├── schema.yml                      # Column tests and docs for both int_ models
+│   │   ├── int_repo_daily_stats.sql        # Daily star/fork/code/issue counts per repo
+│   │   └── int_developer_activity.sql      # Daily event counts and code ratio per actor
+│   │
+│   └── marts/
+│       ├── schema.yml                      # Column tests and docs for all three marts
+│       ├── mart_trending_repos.sql         # Top-100 repos by 7-day rolling stars
+│       ├── mart_contributor_retention.sql  # Monthly cohort retention matrix
+│       └── mart_language_trends.sql        # Daily category breakdown with WoW growth
+│
+├── tests/                                  # Custom singular tests (empty, uses schema tests)
+├── seeds/                                  # Static reference data (none yet)
+├── snapshots/                              # SCD snapshots (none yet)
+├── analyses/                               # Ad-hoc analytical queries (none yet)
+│
+└── docs/
+    └── lineage_graph.png                   # dbt lineage screenshot (see Lineage Graph below)
+```
+
+---
+
+## Key Technical Decisions
+
+### (a) Incremental materialization on `stg_gh_events`
+
+GH Archive emits roughly 40,000 events per hour. Running a full refresh every hour would re-scan the entire `RAW.raw_events` table each time, which is expensive at scale. Instead, `stg_gh_events` is materialized as `incremental`:
+
+- **3-hour lookback window** — the `WHERE` filter re-processes the last 3 hours rather than trusting `MAX(created_at)` exactly. GH Archive occasionally delivers events a few hours late; the overlap catches them without needing a full rescan.
+- **`unique_key = 'event_id'`** — Snowflake executes the incremental run as a `MERGE` on `event_id`. Any event that re-appears in the overlap window is updated in place rather than duplicated, making the load idempotent.
+- **`on_schema_change = 'sync_all_columns'`** — new columns added to `raw_events` automatically propagate into the staging model without a manual full refresh.
+
+The folder-level default in `dbt_project.yml` sets staging to `view`, but the `{{ config(...) }}` block inside `stg_gh_events.sql` overrides it for this one model. In-file config always takes precedence over directory-level defaults.
+
+### (b) Ephemeral materialization for intermediate models
+
+`int_repo_daily_stats` and `int_developer_activity` are never queried by analysts or BI tools directly — they exist solely to feed the mart models. Materializing them as views or tables would create Snowflake objects that only exist for internal wiring.
+
+`ephemeral` models are compiled into CTEs and inlined directly into the SQL of any model that `ref()`s them. The result is that each mart model executes as a single, self-contained query with no intermediate Snowflake objects. This keeps the schema clean and avoids paying for storage or compute on intermediate results that no one queries directly.
+
+### (c) Macros for event categorization
+
+GH Archive has 20+ distinct event types (`PushEvent`, `PullRequestEvent`, `PullRequestReviewEvent`, `IssueCommentEvent`, etc.) that need to be mapped to a smaller set of semantic categories (`code`, `issue`, `star`, `fork`, `release`, `repo_activity`, `community`, `wiki`).
+
+Without a macro, this `CASE` expression would be copy-pasted into every model that needs it (`int_repo_daily_stats`, `int_developer_activity`, `mart_language_trends`). The `get_event_category()` macro provides a single source of truth: adding a new event type or changing a category mapping is a one-line edit in one file, with the change automatically propagated everywhere the macro is called at compile time.
+
+`safe_divide()` follows the same principle — wrapping the NULL-guard pattern once so callers write `{{ safe_divide('a', 'b') }}` instead of repeating the `CASE WHEN denominator = 0 OR denominator IS NULL THEN NULL ELSE ...` pattern.
+
+---
+
+## Lineage Graph
+
+![Lineage Graph](docs/lineage_graph.png)
+
+To generate and capture your own lineage graph:
+
+```bash
+dbt docs generate
+dbt docs serve
+# Open http://localhost:8080, navigate to the lineage graph, screenshot it to docs/lineage_graph.png
+```
+
+---
+
+## Tech Stack
+
+| Component | Version / Status |
+|-----------|-----------------|
+| Snowflake | Warehouse (GH_ARCHIVE database) |
+| dbt-core | 1.11.11 |
+| dbt-snowflake | 1.11.5 |
+| dbt_utils | 1.3.0 |
+| AWS Lambda + EventBridge | Hourly ingestion trigger |
+| S3 | Raw event staging area *(planned)* |
+| Airflow | Pipeline orchestration *(planned)* |
+| Claude API | AI-generated trend insights *(planned)* |
+| Looker Studio | BI dashboard |
+| Streamlit | Interactive analytics app |
+
+---
+
+## How to Run
+
+**Prerequisites:** Python environment with `dbt-snowflake` installed, and `~/.dbt/profiles.yml` configured from `profiles.yml.template`.
+
+```bash
+# 1. Install dbt package dependencies
+dbt deps
+
+# 2. Run all models (staging → intermediate → marts)
+dbt run
+
+# 3. Run the full staging model as a full refresh (first run or schema reset)
+dbt run --full-refresh --select stg_gh_events
+
+# 4. Run tests defined in schema.yml files
+dbt test
+
+# 5. Generate and serve documentation with the lineage graph
+dbt docs generate
+dbt docs serve
+
+# 6. Check source freshness (will warn if raw_events > 2h stale, error if > 6h)
+dbt source freshness
+```
+
+**Run a single layer:**
+
+```bash
+dbt run --select staging
+dbt run --select marts
+dbt run --select mart_trending_repos
+```
