@@ -10,4 +10,15 @@ profiles.yml
 !profiles.yml.template
 
 .env
-*.json.gz 
+*.json.gz
+
+# Python virtual environment
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Local images / scratch files not part of the project
+images/
+
