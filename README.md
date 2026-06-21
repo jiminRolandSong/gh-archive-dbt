@@ -50,8 +50,8 @@ RAW.raw_events
             ├── int_repo_daily_stats      (ephemeral CTE)
             │       └── mart_trending_repos        (table)
             ├── int_developer_activity   (ephemeral CTE)
-            │       ├── mart_contributor_retention  (table)
-            │       └── mart_language_trends        (table)
+            │       └── mart_contributor_retention  (table)
+            ├── mart_language_trends               (table)
             └── int_pr_labels            (ephemeral CTE)
                     └── mart_label_usage            (table)
 ```
