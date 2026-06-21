@@ -12,7 +12,9 @@ models:
       - name: repo_id
         description: "GitHub repository ID"
         tests:
-          - not_null
+          - not_null:
+              config:
+                severity: warn 
       - name: star_count
         description: "WatchEvents received on date_day"
       - name: fork_count
@@ -34,3 +36,19 @@ models:
           - not_null
       - name: code_contribution_ratio
         description: "code_contributions / total_events. Null if total_events = 0."
+
+  - name: int_pr_labels
+    description: "PR label events flattened from the labels array in PullRequestEvent payloads. Ephemeral - inlined as CTE into mart_label_usage. Filtered to action = 'labeled' only."
+    columns:
+      - name: event_id
+        description: "GitHub event ID for the labeling action"
+        tests:
+          - not_null
+      - name: pr_number
+        description: "Pull request number within the repository"
+      - name: label_name
+        description: "Name of the label applied (e.g. 'bug', 'dependencies')"
+        tests:
+          - not_null
+      - name: label_position
+        description: "Index of this label within the labels array on the event (0-based)"

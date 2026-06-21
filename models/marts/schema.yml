@@ -52,3 +52,19 @@ models:
         description: "Total events in this category on date_day"
       - name: wow_growth_rate
         description: "Week-over-week growth rate vs same category 7 days prior. Null for first 7 days."
+
+  - name: mart_label_usage
+    description: "Daily top-20 most-applied PR labels, ranked by usage count. Surfaces labeling conventions and trending workflow tags across repos."
+    columns:
+      - name: date_day
+        description: "Date the label was applied"
+        tests:
+          - not_null
+      - name: label_name
+        description: "GitHub PR label name (e.g. 'bug', 'released', 'wontfix')"
+        tests:
+          - not_null
+      - name: label_applied_count
+        description: "Number of times this label was applied on date_day"
+      - name: daily_rank
+        description: "Rank within date_day by label_applied_count. Top 20 only."

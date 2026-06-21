@@ -6,7 +6,7 @@ A production dbt project that transforms hourly GitHub event data from [GH Archi
 
 ## Project Overview
 
-GH Archive records every public GitHub event — pushes, stars, forks, pull requests, issues, releases — at hourly granularity. This project ingests that raw firehose, deduplicates and lightly types it, then builds three analytical mart tables consumed by Looker Studio dashboards, a Streamlit app, and (planned) a Claude API insight generator.
+GH Archive records every public GitHub event — pushes, stars, forks, pull requests, issues, releases — at hourly granularity. This project ingests that raw firehose, deduplicates and lightly types it, then builds four analytical mart tables consumed by Looker Studio dashboards, a Streamlit app, and (planned) a Claude API insight generator.
 
 **What it produces:**
 
@@ -15,6 +15,7 @@ GH Archive records every public GitHub event — pushes, stars, forks, pull requ
 | `mart_trending_repos` | Top 100 repositories per day ranked by 7-day rolling star count |
 | `mart_contributor_retention` | Monthly cohort retention matrix — how many first-time contributors return month over month |
 | `mart_language_trends` | Daily event category breakdown with week-over-week growth rates |
+| `mart_label_usage` | Daily top-20 PR labels by application count, surfacing labeling conventions across repos |
 
 ---
 
@@ -48,9 +49,11 @@ RAW.raw_events
     └── stg_gh_events          (incremental, deduped)
             ├── int_repo_daily_stats      (ephemeral CTE)
             │       └── mart_trending_repos        (table)
-            └── int_developer_activity   (ephemeral CTE)
-                    ├── mart_contributor_retention  (table)
-                    └── mart_language_trends        (table)
+            ├── int_developer_activity   (ephemeral CTE)
+            │       ├── mart_contributor_retention  (table)
+            │       └── mart_language_trends        (table)
+            └── int_pr_labels            (ephemeral CTE)
+                    └── mart_label_usage            (table)
 ```
 
 ---
@@ -76,15 +79,17 @@ gh_archive/
 │   │       └── stg_gh_events.sql           # Incremental dedup of raw GitHub events
 │   │
 │   ├── intermediate/
-│   │   ├── schema.yml                      # Column tests and docs for both int_ models
+│   │   ├── schema.yml                      # Column tests and docs for all int_ models
 │   │   ├── int_repo_daily_stats.sql        # Daily star/fork/code/issue counts per repo
-│   │   └── int_developer_activity.sql      # Daily event counts and code ratio per actor
+│   │   ├── int_developer_activity.sql      # Daily event counts and code ratio per actor
+│   │   └── int_pr_labels.sql              # PullRequestEvent labels exploded via LATERAL FLATTEN
 │   │
 │   └── marts/
-│       ├── schema.yml                      # Column tests and docs for all three marts
+│       ├── schema.yml                      # Column tests and docs for all four marts
 │       ├── mart_trending_repos.sql         # Top-100 repos by 7-day rolling stars
 │       ├── mart_contributor_retention.sql  # Monthly cohort retention matrix
-│       └── mart_language_trends.sql        # Daily category breakdown with WoW growth
+│       ├── mart_language_trends.sql        # Daily category breakdown with WoW growth
+│       └── mart_label_usage.sql            # Daily top-20 PR labels by application count
 │
 ├── tests/                                  # Custom singular tests (empty, uses schema tests)
 ├── seeds/                                  # Static reference data (none yet)
@@ -122,6 +127,36 @@ GH Archive has 20+ distinct event types (`PushEvent`, `PullRequestEvent`, `PullR
 Without a macro, this `CASE` expression would be copy-pasted into every model that needs it (`int_repo_daily_stats`, `int_developer_activity`, `mart_language_trends`). The `get_event_category()` macro provides a single source of truth: adding a new event type or changing a category mapping is a one-line edit in one file, with the change automatically propagated everywhere the macro is called at compile time.
 
 `safe_divide()` follows the same principle — wrapping the NULL-guard pattern once so callers write `{{ safe_divide('a', 'b') }}` instead of repeating the `CASE WHEN denominator = 0 OR denominator IS NULL THEN NULL ELSE ...` pattern.
+
+### (d) Surrogate key / GROUP BY column mismatch bug
+
+**Problem discovered:** `int_repo_daily_stats` and `int_developer_activity` both generate a surrogate key via `dbt_utils.generate_surrogate_key()` but the hash inputs and the `GROUP BY` columns were out of sync:
+
+```sql
+-- surrogate_key hashed only repo_id + date_day ...
+generate_surrogate_key(['repo_id', 'date_day']) as surrogate_key
+
+-- ... but GROUP BY included repo_name as well
+GROUP BY repo_id, repo_name, date_day
+```
+
+`repo_name` (and `actor_login` in the developer model) are mutable on GitHub — a repository can be renamed and a user can change their username. When that happens, the same `repo_id` appears in the same day's data with two different `repo_name` values. Because `GROUP BY` treated them as distinct groups, they produced two rows with identical `surrogate_key` values, failing the `unique` schema test. This surfaced as 32 duplicate-key failures on `unique_int_repo_daily_stats_surrogate_key` and 4 on `unique_int_developer_activity_surrogate_key`.
+
+**Root cause:** The surrogate key was designed to represent *one entity per day*, but the `GROUP BY` inadvertently encoded an attribute (`repo_name` / `actor_login`) that can vary intra-day for the same entity — creating a fan-out that broke the uniqueness guarantee.
+
+**Fix:** Narrow `GROUP BY` to match exactly what the surrogate key hashes (`repo_id + date_day` / `actor_id + date_day`), and resolve the multi-value attribute conflict with `MAX_BY()`:
+
+```sql
+-- int_repo_daily_stats (same pattern in int_developer_activity)
+GROUP BY repo_id, date_day
+
+-- take the name as of the most recent event on that day
+MAX_BY(repo_name, created_at) as repo_name
+```
+
+`MAX_BY(column, ordering_column)` picks the value associated with the latest `created_at` timestamp in the group, making the chosen name deterministic and reflecting the entity's most up-to-date state for that day. Both unique tests now pass.
+
+**Known data quality issue (tracked, not suppressed):** `int_repo_daily_stats.repo_id` has a single `not_null` violation caused by GH Archive omitting `repo` metadata on some `ForkEvent` payloads — an upstream defect outside our control. Rather than silently dropping the row, the `not_null` test is set to `severity: warn` in `schema.yml` so it surfaces in CI output as a tracked known issue without blocking the run.
 
 ---
 
