@@ -1,7 +1,8 @@
 {{ config(
     materialized='incremental',
     unique_key='event_id',
-    on_schema_change='sync_all_columns'
+    on_schema_change='sync_all_columns',
+    cluster_by=['date_trunc(\'day\', created_at)']
 )}}
 with source as (
     select * from {{ source('gh_archive', 'raw_events')}}
