@@ -311,87 +311,138 @@ with tab_labels:
 
 # ── Tab 5: Pipeline ───────────────────────────────────────────────
 
+def _box(label: str, sublabel: str, color: str, width: str = "100%") -> str:
+    return f"""
+    <div style="
+        background-color:{color}22;
+        border:2px solid {color};
+        border-radius:8px;
+        padding:10px 14px;
+        width:{width};
+        box-sizing:border-box;
+        text-align:center;
+        font-size:0.82rem;
+        line-height:1.4;
+    ">
+        <span style="color:{color};font-weight:700;font-size:0.88rem;">{label}</span>
+        {"<br/><span style='color:#aaaaaa;font-size:0.76rem;'>" + sublabel + "</span>" if sublabel else ""}
+    </div>"""
+
+def _arrow(label: str = "") -> str:
+    return f"""
+    <div style="text-align:center;color:#666;font-size:1.1rem;margin:4px 0;">
+        {"<span style='font-size:0.72rem;color:#888;'>" + label + "</span><br/>" if label else ""}↓
+    </div>"""
+
+def _row(*items: str, gap: str = "10px") -> str:
+    cells = "".join(
+        f'<div style="flex:1;min-width:0;">{item}</div>' for item in items
+    )
+    return f'<div style="display:flex;gap:{gap};align-items:stretch;">{cells}</div>'
+
+def _section_label(text: str, color: str) -> str:
+    return f"""
+    <div style="
+        font-size:0.7rem;font-weight:600;letter-spacing:0.08em;
+        color:{color};text-transform:uppercase;margin-bottom:4px;
+    ">{text}</div>"""
+
+C_ORCH    = "#2ca02c"
+C_INGEST  = "#1f77b4"
+C_STORAGE = "#17becf"
+C_DBT     = "#ff7f0e"
+C_AI      = "#9467bd"
+C_SERVE   = "#d62728"
+
 with tab_pipeline:
     st.header("Pipeline Architecture")
-    st.caption("End-to-end data flow from GH Archive to this live dashboard.")
+    st.caption("End-to-end data flow — GH Archive → Snowflake → dbt → Claude → Streamlit")
 
-    st.graphviz_chart("""
-        digraph pipeline {
-            graph [rankdir=TB splines=ortho bgcolor="transparent" pad="0.4"]
-            node  [fontname="Helvetica" fontsize=13 style=filled shape=box
-                   fillcolor="#1e2530" fontcolor="#e8eaf0" color="#4a5568"
-                   margin="0.25,0.15" penwidth=1.5]
-            edge  [color="#4a9eff" penwidth=1.8 arrowsize=0.8]
+    html_parts = []
 
-            GHA  [label="GH Archive\ngharchive.org\n~40k events / hr"
-                  fillcolor="#0d3b6e" fontcolor="#90caf9"]
-            LAMB [label="AWS Lambda\n+ EventBridge\nhourly trigger"
-                  fillcolor="#1a3a2a" fontcolor="#80cbc4"]
-            S3   [label="S3\nraw JSON"
-                  fillcolor="#1a3a2a" fontcolor="#80cbc4"]
-            SF   [label="Snowflake\nRAW.raw_events"
-                  fillcolor="#1a2040" fontcolor="#9fa8da"]
-            DBT  [label="dbt (this project)\nstg → int → mart"
-                  fillcolor="#2d1b4e" fontcolor="#ce93d8"]
+    # ── Orchestration header ──────────────────────────────────────
+    html_parts.append(_section_label("Orchestration", C_ORCH))
+    html_parts.append(_row(
+        _box("Airflow — gh_archive_pipeline DAG", "schedule: '5 * * * *' (every hour at :05)", C_ORCH),
+        _box("Airflow — gh_archive_daily_insights DAG", "schedule: '0 0 * * *' (daily midnight UTC)", C_AI),
+    ))
+    html_parts.append(_arrow())
 
-            subgraph cluster_marts {
-                label="dbt Mart Tables" fontcolor="#ce93d8" fontsize=11
-                color="#4a4060" style=dashed
-                M1 [label="mart_trending_repos"]
-                M2 [label="mart_contributor_retention"]
-                M3 [label="mart_language_trends"]
-                M4 [label="mart_label_usage"]
-            }
+    # ── Task 1 / daily trigger row ────────────────────────────────
+    html_parts.append(_row(
+        _box("Task 1 · LambdaInvokeFunctionOperator", "invoke ingest_gh_archive (synchronous)", C_INGEST),
+        _box("Claude API · claude-sonnet-4-6", "fetch mart data → generate briefing", C_AI),
+    ))
+    html_parts.append(_arrow())
 
-            CLAUDE [label="Claude API\ndaily insights (midnight)"
-                    fillcolor="#3b1a1a" fontcolor="#ef9a9a"]
-            ST     [label="Streamlit Live Demo ✅\ngh-archive-dbt-jimin.streamlit.app"
-                    fillcolor="#0d3b2a" fontcolor="#a5d6a7" penwidth=2.5 color="#66bb6a"]
+    # ── Lambda detail / Claude output row ────────────────────────
+    html_parts.append(_section_label("Ingestion", C_INGEST))
+    html_parts.append(_row(
+        _box("AWS Lambda", "ingestion/lambda_function.py", C_INGEST),
+        _box("mart_daily_insights", "insight saved to Snowflake", C_STORAGE),
+    ))
+    html_parts.append(_arrow())
 
-            GHA  -> LAMB [label=" hourly" fontcolor="#aaaaaa" fontsize=10]
-            LAMB -> S3
-            S3   -> SF
-            SF   -> DBT
-            DBT  -> M1
-            DBT  -> M2
-            DBT  -> M3
-            DBT  -> M4
-            M1   -> CLAUDE
-            M3   -> CLAUDE
-            M4   -> CLAUDE
-            M1   -> ST
-            M3   -> ST
-            M4   -> ST
-            CLAUDE -> ST [label=" daily insight" fontcolor="#aaaaaa" fontsize=10]
-        }
-    """, use_container_width=True)
+    # ── GH Archive fetch ─────────────────────────────────────────
+    html_parts.append(_row(
+        _box("GH Archive · gharchive.org", "fetch hourly .json.gz (~50–500 MB)", C_INGEST),
+        _box("", "", "transparent"),
+    ))
+    html_parts.append(_arrow())
+
+    # ── S3 upload ────────────────────────────────────────────────
+    html_parts.append(_row(
+        _box("S3 · gh-archive-raw-140767157729/raw/", "multipart streaming upload — never fully in memory", C_INGEST),
+        _box("", "", "transparent"),
+    ))
+    html_parts.append(_arrow("COPY INTO via Storage Integration (IAM Role)"))
+
+    # ── Snowflake raw ────────────────────────────────────────────
+    html_parts.append(_section_label("Storage", C_STORAGE))
+    html_parts.append(_box("Snowflake · RAW.raw_events", "append-only, ~40K events/hr", C_STORAGE))
+    html_parts.append(_arrow())
+
+    # ── dbt tasks ────────────────────────────────────────────────
+    html_parts.append(_section_label("Transformation", C_DBT))
+    html_parts.append(_row(
+        _box("Task 2 · dbt run", "stg_gh_events → int_* → mart_*", C_DBT),
+        _box("Task 3 · dbt test", "schema tests on all mart tables", C_DBT),
+    ))
+    html_parts.append(_arrow())
+
+    # ── Mart tables ───────────────────────────────────────────────
+    html_parts.append(_row(
+        _box("mart_trending_repos", "top-100 repos · 7d rolling stars", C_DBT),
+        _box("mart_contributor_retention", "monthly cohort retention matrix", C_DBT),
+        _box("mart_language_trends", "daily category breakdown + WoW", C_DBT),
+        _box("mart_label_usage", "top-20 PR labels per day", C_DBT),
+    ))
+    html_parts.append(_arrow())
+
+    # ── Streamlit ────────────────────────────────────────────────
+    html_parts.append(_section_label("Serving", C_SERVE))
+    html_parts.append(_box(
+        "Streamlit Live Demo ✅",
+        "gh-archive-dbt-jimin.streamlit.app · queries marts directly (TTL 5 min)",
+        C_SERVE,
+    ))
+
+    st.markdown(
+        '<div style="max-width:860px;margin:0 auto;">' + "".join(html_parts) + "</div>",
+        unsafe_allow_html=True,
+    )
 
     st.divider()
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("**Ingestion**")
-        st.markdown("""
-- GH Archive publishes hourly `.json.gz` dumps
-- AWS EventBridge triggers Lambda on the hour
-- Lambda downloads & stages raw JSON into S3
-- Snowflake `COPY INTO` loads S3 → `RAW.raw_events`
-""")
-    with col2:
-        st.markdown("**Transformation (dbt)**")
-        st.markdown("""
-- `stg_gh_events` — incremental dedup (3hr lookback)
-- `int_*` — ephemeral CTEs, no intermediate objects
-- `mart_trending_repos` — top-100 by 7d rolling stars
-- `mart_language_trends` — daily category breakdown + WoW
-- `mart_label_usage` — top-20 PR labels per day
-""")
-    with col3:
-        st.markdown("**Serving**")
-        st.markdown("""
-- Airflow runs `dbt run + dbt test` every hour
-- Claude API generates a daily briefing at midnight
-- Insight saved to `mart_daily_insights`
-- This Streamlit app queries marts directly (TTL 5 min)
-- Live at [gh-archive-dbt-jimin.streamlit.app](https://gh-archive-dbt-jimin.streamlit.app/)
-""")
+    # ── Metrics row ───────────────────────────────────────────────
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Events ingested", "~40K / hr", "GH Archive")
+    m2.metric("Mart tables", "4", "dbt")
+    m3.metric("Pipeline cadence", "Hourly", "Airflow")
+    m4.metric("AI insights", "Daily", "Claude API")
+
+    st.markdown(
+        "**Live demo:** [gh-archive-dbt-jimin.streamlit.app]"
+        "(https://gh-archive-dbt-jimin.streamlit.app/)",
+        unsafe_allow_html=False,
+    )

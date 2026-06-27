@@ -36,9 +36,9 @@ GH Archive records every public GitHub event — pushes, stars, forks, pull requ
                         └──────────────────────┬──────────────────────────────────┘
                                                │
  ┌────────────────┐    ┌──────────────┐    ┌──┴───────┐    ┌───────┐    ┌─────────────────┐
- │   GH Archive   │───▶│ AWS Lambda + │───▶│    S3    │───▶│ Snow- │───▶│      dbt        │
- │ gharchive.org  │    │ EventBridge  │    │   raw    │    │ flake │    │  (this project) │
- │ ~40k events/hr │    │ (hourly)     │    │          │    │  RAW  │    │                 │
+ │   GH Archive   │───▶│ AWS Lambda   │───▶│    S3    │───▶│ Snow- │───▶│      dbt        │
+ │ gharchive.org  │    │ (Task 1 via  │    │   raw    │    │ flake │    │  (this project) │
+ │ ~40k events/hr │    │  Airflow)    │    │          │    │  RAW  │    │                 │
  └────────────────┘    └──────────────┘    └──────────┘    └───────┘    └────────┬────────┘
                                                                                   │
                               ┌───────────────────────────────────────────────────┤
@@ -54,7 +54,7 @@ GH Archive records every public GitHub event — pushes, stars, forks, pull requ
 
 ```
 GH Archive (gharchive.org)
-    ↓ hourly — AWS EventBridge triggers Lambda
+    ↓ hourly — Airflow (gh_archive_pipeline DAG) invokes Lambda directly
 AWS Lambda + S3
     ↓ COPY INTO
 Snowflake RAW.raw_events
@@ -220,7 +220,8 @@ dbt docs serve
 | dbt-core | 1.11.11 |
 | dbt-snowflake | 1.11.5 |
 | dbt_utils | 1.3.0 |
-| AWS Lambda + EventBridge | Hourly ingestion trigger (`ingestion/lambda_function.py`) |
+| AWS Lambda | Invoked hourly by Airflow `LambdaInvokeFunctionOperator` (`ingestion/lambda_function.py`) |
+| AWS EventBridge | Rule exists but disabled — Airflow is the trigger |
 | S3 | Raw event staging area |
 | Airflow | Pipeline orchestration via Docker Compose (`airflow/`) |
 | Claude API | Daily trend insights at midnight (`insights/insights_generator.py`) |
@@ -231,9 +232,9 @@ dbt docs serve
 
 ## Ingestion Pipeline
 
-AWS EventBridge triggers `ingestion/lambda_function.py` on the hour (`:00`). The Lambda streams the GH Archive `.json.gz` file for that hour — typically 50–500 MB — directly to S3 using multipart upload, so the full file is never loaded into memory. Snowflake then loads from S3 via a Storage Integration backed by an IAM Role trust policy; no static AWS credentials are stored in Snowflake.
+Airflow's `gh_archive_pipeline` DAG (`schedule: "5 * * * *"`, offset by 5 minutes to let GH Archive publish) is the top-level orchestrator. It invokes `ingestion/lambda_function.py` directly via `LambdaInvokeFunctionOperator` as Task 1. An AWS EventBridge rule exists on the Lambda but is disabled — Airflow is the sole trigger. Lambda streams the GH Archive `.json.gz` file for that hour — typically 50–500 MB — directly to S3 using multipart upload, so the full file is never loaded into memory. Snowflake then loads from S3 via a Storage Integration backed by an IAM Role trust policy; no static AWS credentials are stored in Snowflake.
 
-Airflow orchestrates the full hourly sequence via the `gh_archive_pipeline` DAG (`schedule: "5 * * * *"`, offset by 5 minutes to let GH Archive publish):
+Airflow orchestrates the full hourly sequence:
 
 ```
 gh_archive_pipeline (hourly)
