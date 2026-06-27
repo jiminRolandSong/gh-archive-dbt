@@ -38,7 +38,7 @@ GH Archive records every public GitHub event — pushes, stars, forks, pull requ
                      ┌────────┴────────┐                               ┌──────────┴────────┐
                      │   Claude API    │                               │   Looker Studio   │
                      │ (insight gen.)  │                               │   + Streamlit     │
-                     │   (planned)     │                               │   (dashboards)    │
+                     │                 │                               │   (dashboards)    │
                      └─────────────────┘                               └───────────────────┘
 ```
 
@@ -185,9 +185,9 @@ dbt docs serve
 | AWS Lambda + EventBridge | Hourly ingestion trigger |
 | S3 | Raw event staging area *(planned)* |
 | Airflow | Pipeline orchestration *(planned)* |
-| Claude API | AI-generated trend insights *(planned)* |
+| Claude API | AI-generated trend insights (`insights/insights_generator.py`) |
 | Looker Studio | BI dashboard |
-| Streamlit | Interactive analytics app |
+| Streamlit | Interactive analytics app (`streamlit_app.py`) |
 
 ---
 
@@ -223,3 +223,30 @@ dbt run --select staging
 dbt run --select marts
 dbt run --select mart_trending_repos
 ```
+
+---
+
+## Streamlit (dashboards)
+
+An interactive analytics app that visualises all four mart tables and lets you trigger Claude-powered daily insights from the browser.
+
+**Prerequisites:** Copy `.env.example` to `.env` and fill in your Snowflake credentials.
+
+```bash
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Launch the app
+streamlit run streamlit_app.py
+```
+
+The app opens at `http://localhost:8501` and provides four tabs:
+
+| Tab | Contents |
+|-----|----------|
+| **Daily Insights** | Latest AI-generated trend briefing from `mart_daily_insights`; "Generate New Insight" button calls Claude via `insights/insights_generator.py` |
+| **Trending Repos** | Date-picker → top-20 repos from `mart_trending_repos` as a table + bar chart (7-day rolling stars) |
+| **Activity Trends** | Last-30-day event count & week-over-week growth rate line charts from `mart_language_trends` |
+| **PR Label Usage** | Top-20 PR labels from `mart_label_usage` as a horizontal bar chart |
+
+All Snowflake queries are cached for 300 seconds via `st.cache_data`. The sidebar shows the timestamp of the most recent event in `stg_gh_events`.
