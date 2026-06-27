@@ -35,7 +35,7 @@ def run_query(sql: str) -> pd.DataFrame:
         conn.close()
         return df
     except Exception as e:
-        st.error(f"Snowflake 연결 실패: {e}")
+        st.error(f"Snowflake connection failed: {e}")
         return pd.DataFrame()
 
 # ── Sidebar ───────────────────────────────────────────────────────
@@ -87,21 +87,56 @@ with tab_insights:
         with col1:
             st.markdown(row.get("INSIGHT_TEXT", ""))
     else:
-        st.info("아직 생성된 인사이트가 없습니다. 아래 버튼으로 첫 인사이트를 생성하세요.")
+        st.info("No insights generated yet. Click the button below to create the first one.")
 
     st.divider()
 
     if st.button("Generate New Insight", type="primary"):
-        with st.spinner("Claude API 호출 중..."):
-            try:
-                sys.path.insert(0, os.path.join(os.path.dirname(__file__), "insights"))
-                from insights_generator import main as generate_insight
-                generate_insight()
-                st.cache_data.clear()
-                st.success("인사이트가 생성되었습니다! 페이지를 새로고침하면 표시됩니다.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"인사이트 생성 실패: {e}")
+        progress = st.progress(0, text="Initializing...")
+        status = st.empty()
+
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "insights"))
+            import insights_generator as ig
+
+            progress.progress(10, text="Connecting to Snowflake...")
+            status.caption("Step 1 / 4 — Opening Snowflake connection")
+            conn = ig.get_snowflake_conn()
+
+            progress.progress(30, text="Fetching mart data...")
+            status.caption("Step 2 / 4 — Querying trending repos, language trends, label usage")
+            data = ig.fetch_mart_data(conn)
+
+            progress.progress(55, text="Calling Claude API...")
+            status.caption(
+                f"Step 3 / 4 — Sending prompt ({len(data['trending_repos'])} repos · "
+                f"{len(data['language_trends'])} trend rows · "
+                f"{len(data['label_usage'])} label rows)"
+            )
+            import anthropic
+            client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            message = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": ig.build_prompt(data)}],
+            )
+            insight_text = message.content[0].text
+
+            progress.progress(80, text="Saving to Snowflake...")
+            status.caption("Step 4 / 4 — Writing insight to mart_daily_insights")
+            ig.save_insight(conn, insight_text, data)
+            conn.close()
+
+            progress.progress(100, text="Done!")
+            status.empty()
+            st.cache_data.clear()
+            st.success("Insight generated and saved. Refreshing...")
+            st.rerun()
+
+        except Exception as e:
+            progress.empty()
+            status.empty()
+            st.error(f"Insight generation failed: {e}")
 
 # ── Tab 2: Trending Repos ─────────────────────────────────────────
 
@@ -116,12 +151,12 @@ with tab_trending:
     """)
 
     if dates_df.empty:
-        st.info("mart_trending_repos 데이터가 없습니다.")
+        st.info("No data available in mart_trending_repos.")
     else:
         date_col = "DATE_DAY"
         date_options = dates_df[date_col].tolist()
         selected_date = st.selectbox(
-            "날짜 선택",
+            "Select date",
             options=date_options,
             format_func=lambda d: str(d)[:10],
         )
@@ -163,7 +198,7 @@ with tab_trending:
             fig.update_xaxes(showticklabels=False)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("선택한 날짜에 데이터가 없습니다.")
+            st.info("No data available for the selected date.")
 
 # ── Tab 3: Activity Trends ────────────────────────────────────────
 
@@ -179,7 +214,7 @@ with tab_activity:
     """)
 
     if trends_df.empty:
-        st.info("mart_language_trends 데이터가 없습니다.")
+        st.info("No data available in mart_language_trends.")
     else:
         col_map = {c: c.lower() for c in trends_df.columns}
         trends_df = trends_df.rename(columns=col_map)
@@ -225,7 +260,7 @@ with tab_activity:
             )
             st.plotly_chart(fig_wow, use_container_width=True)
         else:
-            st.info("WoW 성장률 데이터가 없습니다.")
+            st.info("No WoW growth rate data available.")
 
 # ── Tab 4: PR Label Usage ─────────────────────────────────────────
 
@@ -241,7 +276,7 @@ with tab_labels:
     """)
 
     if labels_df.empty:
-        st.info("mart_label_usage 데이터가 없습니다.")
+        st.info("No data available in mart_label_usage.")
     else:
         col_map = {c: c.lower() for c in labels_df.columns}
         labels_df = labels_df.rename(columns=col_map)
