@@ -22,3 +22,6 @@ __pycache__/
 # Local images / scratch files not part of the project
 images/
 
+# Airflow
+airflow/logs/
+airflow/.env
