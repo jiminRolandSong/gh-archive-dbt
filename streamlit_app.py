@@ -58,11 +58,12 @@ with st.sidebar:
 
 # ── Tabs ──────────────────────────────────────────────────────────
 
-tab_insights, tab_trending, tab_activity, tab_labels = st.tabs([
+tab_insights, tab_trending, tab_activity, tab_labels, tab_pipeline = st.tabs([
     "Daily Insights",
     "Trending Repos",
     "Activity Trends",
     "PR Label Usage",
+    "Pipeline",
 ])
 
 # ── Tab 1: Daily Insights ─────────────────────────────────────────
@@ -307,3 +308,90 @@ with tab_labels:
             use_container_width=True,
             hide_index=True,
         )
+
+# ── Tab 5: Pipeline ───────────────────────────────────────────────
+
+with tab_pipeline:
+    st.header("Pipeline Architecture")
+    st.caption("End-to-end data flow from GH Archive to this live dashboard.")
+
+    st.graphviz_chart("""
+        digraph pipeline {
+            graph [rankdir=TB splines=ortho bgcolor="transparent" pad="0.4"]
+            node  [fontname="Helvetica" fontsize=13 style=filled shape=box
+                   fillcolor="#1e2530" fontcolor="#e8eaf0" color="#4a5568"
+                   margin="0.25,0.15" penwidth=1.5]
+            edge  [color="#4a9eff" penwidth=1.8 arrowsize=0.8]
+
+            GHA  [label="GH Archive\ngharchive.org\n~40k events / hr"
+                  fillcolor="#0d3b6e" fontcolor="#90caf9"]
+            LAMB [label="AWS Lambda\n+ EventBridge\nhourly trigger"
+                  fillcolor="#1a3a2a" fontcolor="#80cbc4"]
+            S3   [label="S3\nraw JSON"
+                  fillcolor="#1a3a2a" fontcolor="#80cbc4"]
+            SF   [label="Snowflake\nRAW.raw_events"
+                  fillcolor="#1a2040" fontcolor="#9fa8da"]
+            DBT  [label="dbt (this project)\nstg → int → mart"
+                  fillcolor="#2d1b4e" fontcolor="#ce93d8"]
+
+            subgraph cluster_marts {
+                label="dbt Mart Tables" fontcolor="#ce93d8" fontsize=11
+                color="#4a4060" style=dashed
+                M1 [label="mart_trending_repos"]
+                M2 [label="mart_contributor_retention"]
+                M3 [label="mart_language_trends"]
+                M4 [label="mart_label_usage"]
+            }
+
+            CLAUDE [label="Claude API\ndaily insights (midnight)"
+                    fillcolor="#3b1a1a" fontcolor="#ef9a9a"]
+            ST     [label="Streamlit Live Demo ✅\ngh-archive-dbt-jimin.streamlit.app"
+                    fillcolor="#0d3b2a" fontcolor="#a5d6a7" penwidth=2.5 color="#66bb6a"]
+
+            GHA  -> LAMB [label=" hourly" fontcolor="#aaaaaa" fontsize=10]
+            LAMB -> S3
+            S3   -> SF
+            SF   -> DBT
+            DBT  -> M1
+            DBT  -> M2
+            DBT  -> M3
+            DBT  -> M4
+            M1   -> CLAUDE
+            M3   -> CLAUDE
+            M4   -> CLAUDE
+            M1   -> ST
+            M3   -> ST
+            M4   -> ST
+            CLAUDE -> ST [label=" daily insight" fontcolor="#aaaaaa" fontsize=10]
+        }
+    """, use_container_width=True)
+
+    st.divider()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("**Ingestion**")
+        st.markdown("""
+- GH Archive publishes hourly `.json.gz` dumps
+- AWS EventBridge triggers Lambda on the hour
+- Lambda downloads & stages raw JSON into S3
+- Snowflake `COPY INTO` loads S3 → `RAW.raw_events`
+""")
+    with col2:
+        st.markdown("**Transformation (dbt)**")
+        st.markdown("""
+- `stg_gh_events` — incremental dedup (3hr lookback)
+- `int_*` — ephemeral CTEs, no intermediate objects
+- `mart_trending_repos` — top-100 by 7d rolling stars
+- `mart_language_trends` — daily category breakdown + WoW
+- `mart_label_usage` — top-20 PR labels per day
+""")
+    with col3:
+        st.markdown("**Serving**")
+        st.markdown("""
+- Airflow runs `dbt run + dbt test` every hour
+- Claude API generates a daily briefing at midnight
+- Insight saved to `mart_daily_insights`
+- This Streamlit app queries marts directly (TTL 5 min)
+- Live at [gh-archive-dbt-jimin.streamlit.app](https://gh-archive-dbt-jimin.streamlit.app/)
+""")

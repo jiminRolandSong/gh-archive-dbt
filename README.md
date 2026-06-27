@@ -4,9 +4,17 @@ A production dbt project that transforms hourly GitHub event data from [GH Archi
 
 ---
 
+## Live Demo
+
+**[https://gh-archive-dbt-jimin.streamlit.app/](https://gh-archive-dbt-jimin.streamlit.app/)**
+
+Interactive Streamlit dashboard with five tabs: Daily Insights (Claude-generated briefings), Trending Repos, Activity Trends, PR Label Usage, and a full Pipeline Architecture diagram.
+
+---
+
 ## Project Overview
 
-GH Archive records every public GitHub event — pushes, stars, forks, pull requests, issues, releases — at hourly granularity. This project ingests that raw firehose, deduplicates and lightly types it, then builds four analytical mart tables consumed by Looker Studio dashboards, a Streamlit app, and (planned) a Claude API insight generator.
+GH Archive records every public GitHub event — pushes, stars, forks, pull requests, issues, releases — at hourly granularity. This project ingests that raw firehose via AWS Lambda into Snowflake, deduplicates and lightly types it with dbt, then builds four analytical mart tables consumed by Looker Studio dashboards, a Streamlit app, and a Claude API insight generator.
 
 **What it produces:**
 
@@ -24,12 +32,12 @@ GH Archive records every public GitHub event — pushes, stars, forks, pull requ
 ```
                         ┌─────────────────────────────────────────────────────────┐
                         │                    Orchestration                        │
-                        │              Airflow  (planned)                         │
+                        │         Airflow (Docker Compose, hourly DAG)            │
                         └──────────────────────┬──────────────────────────────────┘
                                                │
  ┌────────────────┐    ┌──────────────┐    ┌──┴───────┐    ┌───────┐    ┌─────────────────┐
  │   GH Archive   │───▶│ AWS Lambda + │───▶│    S3    │───▶│ Snow- │───▶│      dbt        │
- │ gharchive.org  │    │ EventBridge  │    │  (raw)   │    │ flake │    │  (this project) │
+ │ gharchive.org  │    │ EventBridge  │    │   raw    │    │ flake │    │  (this project) │
  │ ~40k events/hr │    │ (hourly)     │    │          │    │  RAW  │    │                 │
  └────────────────┘    └──────────────┘    └──────────┘    └───────┘    └────────┬────────┘
                                                                                   │
@@ -37,23 +45,32 @@ GH Archive records every public GitHub event — pushes, stars, forks, pull requ
                               │                                                   │
                      ┌────────┴────────┐                               ┌──────────┴────────┐
                      │   Claude API    │                               │   Looker Studio   │
-                     │ (insight gen.)  │                               │   + Streamlit     │
-                     │                 │                               │   (dashboards)    │
+                     │ (daily midnight │                               │   + Streamlit     │
+                     │  insight gen.)  │                               │   (dashboards)    │
                      └─────────────────┘                               └───────────────────┘
 ```
 
-**Data flow within dbt:**
+**End-to-end data flow:**
 
 ```
-RAW.raw_events
-    └── stg_gh_events          (incremental, deduped)
-            ├── int_repo_daily_stats      (ephemeral CTE)
-            │       └── mart_trending_repos        (table)
-            ├── int_developer_activity   (ephemeral CTE)
-            │       └── mart_contributor_retention  (table)
-            ├── mart_language_trends               (table)
-            └── int_pr_labels            (ephemeral CTE)
-                    └── mart_label_usage            (table)
+GH Archive (gharchive.org)
+    ↓ hourly — AWS EventBridge triggers Lambda
+AWS Lambda + S3
+    ↓ COPY INTO
+Snowflake RAW.raw_events
+    ↓ Airflow: dbt run + dbt test every hour
+stg_gh_events              (incremental, deduped, 3hr lookback)
+    ├── int_repo_daily_stats      (ephemeral CTE)
+    │       └── mart_trending_repos        (table)
+    ├── int_developer_activity    (ephemeral CTE)
+    │       └── mart_contributor_retention  (table)
+    ├── mart_language_trends               (table)
+    └── int_pr_labels             (ephemeral CTE)
+            └── mart_label_usage           (table)
+    ↓ Airflow: daily midnight DAG
+Claude API → mart_daily_insights
+    ↓
+Streamlit Live Demo  https://gh-archive-dbt-jimin.streamlit.app/
 ```
 
 ---
@@ -66,6 +83,27 @@ gh_archive/
 ├── packages.yml                            # dbt_utils 1.3.0 dependency
 ├── package-lock.yml                        # Pinned package hash
 ├── profiles.yml.template                   # Safe-to-commit credential template (no secrets)
+├── streamlit_app.py                        # Streamlit dashboard (5 tabs)
+├── requirements.txt                        # Python deps for Streamlit + insights
+│
+├── ingestion/                              # Lambda ingestion pipeline
+│   ├── lambda_function.py                  # GH Archive → S3 → Snowflake COPY INTO
+│   ├── Dockerfile                          # Lambda container image
+│   ├── requirements.txt                    # requests, snowflake-connector-python
+│   └── backfill.py                         # Manual backfill utility for historical data
+│
+├── airflow/                                # Airflow orchestration
+│   ├── docker-compose.yml                  # Airflow + PostgreSQL
+│   ├── Dockerfile.airflow                  # Custom image with dbt-snowflake + providers
+│   ├── .env.example                        # AIRFLOW_UID, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+│   │                                       # AWS_DEFAULT_REGION, SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER,
+│   │                                       # SNOWFLAKE_PASSWORD, ANTHROPIC_API_KEY
+│   └── dags/
+│       ├── gh_archive_pipeline.py          # Hourly: Lambda → dbt run → dbt test
+│       └── gh_archive_daily_insights.py    # Daily midnight: Claude API insights
+│
+├── insights/
+│   └── insights_generator.py              # Fetch mart data → Claude API → mart_daily_insights
 │
 ├── macros/
 │   ├── get_event_category.sql              # Maps 16 raw event types to 8 semantic categories
@@ -182,12 +220,47 @@ dbt docs serve
 | dbt-core | 1.11.11 |
 | dbt-snowflake | 1.11.5 |
 | dbt_utils | 1.3.0 |
-| AWS Lambda + EventBridge | Hourly ingestion trigger |
-| S3 | Raw event staging area *(planned)* |
-| Airflow | Pipeline orchestration *(planned)* |
-| Claude API | AI-generated trend insights (`insights/insights_generator.py`) |
+| AWS Lambda + EventBridge | Hourly ingestion trigger (`ingestion/lambda_function.py`) |
+| S3 | Raw event staging area |
+| Airflow | Pipeline orchestration via Docker Compose (`airflow/`) |
+| Claude API | Daily trend insights at midnight (`insights/insights_generator.py`) |
 | Looker Studio | BI dashboard |
-| Streamlit | Interactive analytics app (`streamlit_app.py`) |
+| Streamlit | Interactive analytics app — [live demo](https://gh-archive-dbt-jimin.streamlit.app/) |
+
+---
+
+## Ingestion Pipeline
+
+AWS EventBridge triggers `ingestion/lambda_function.py` on the hour (`:00`). The Lambda streams the GH Archive `.json.gz` file for that hour — typically 50–500 MB — directly to S3 using multipart upload, so the full file is never loaded into memory. Snowflake then loads from S3 via a Storage Integration backed by an IAM Role trust policy; no static AWS credentials are stored in Snowflake.
+
+Airflow orchestrates the full hourly sequence via the `gh_archive_pipeline` DAG (`schedule: "5 * * * *"`, offset by 5 minutes to let GH Archive publish):
+
+```
+gh_archive_pipeline (hourly)
+├── Task 1: LambdaInvokeFunctionOperator  →  invoke ingest_gh_archive (synchronous)
+├── Task 2: BashOperator  →  dbt run --select stg_gh_events+
+└── Task 3: BashOperator  →  dbt test --select stg_gh_events+
+```
+
+A separate daily DAG (`gh_archive_daily_insights`, `schedule: "0 0 * * *"`) runs at midnight UTC. It calls the Claude API with the latest mart data and writes the generated briefing to `mart_daily_insights`.
+
+---
+
+## Backfill
+
+To load historical GH Archive data, edit `start_date` and `end_date` at the top of `ingestion/backfill.py`, then run:
+
+```bash
+python ingestion/backfill.py
+```
+
+The script iterates hour by hour and invokes Lambda synchronously (`InvocationType=RequestResponse`), waiting for each hour to complete before moving to the next. This keeps memory flat and makes failures easy to spot.
+
+The load is idempotent: Snowflake's `COPY INTO` runs with `FORCE = FALSE`, so any S3 file already present in the load history (tracked for 180 days) is silently skipped. After the backfill finishes, propagate the historical data through all mart models:
+
+```bash
+dbt run --select stg_gh_events+
+```
 
 ---
 
