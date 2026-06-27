@@ -311,41 +311,25 @@ with tab_labels:
 
 # ── Tab 5: Pipeline ───────────────────────────────────────────────
 
-def _box(label: str, sublabel: str, color: str, width: str = "100%") -> str:
-    return f"""
-    <div style="
-        background-color:{color}22;
-        border:2px solid {color};
-        border-radius:8px;
-        padding:10px 14px;
-        width:{width};
-        box-sizing:border-box;
-        text-align:center;
-        font-size:0.82rem;
-        line-height:1.4;
-    ">
-        <span style="color:{color};font-weight:700;font-size:0.88rem;">{label}</span>
-        {"<br/><span style='color:#aaaaaa;font-size:0.76rem;'>" + sublabel + "</span>" if sublabel else ""}
-    </div>"""
-
-def _arrow(label: str = "") -> str:
-    return f"""
-    <div style="text-align:center;color:#666;font-size:1.1rem;margin:4px 0;">
-        {"<span style='font-size:0.72rem;color:#888;'>" + label + "</span><br/>" if label else ""}↓
-    </div>"""
-
-def _row(*items: str, gap: str = "10px") -> str:
-    cells = "".join(
-        f'<div style="flex:1;min-width:0;">{item}</div>' for item in items
+def _node(label: str, sublabel: str, color: str):
+    """Render a single pipeline node using st.container + column styling."""
+    st.markdown(
+        f"""<div style="border:2px solid {color};border-radius:8px;padding:8px 14px;
+            text-align:center;background:transparent;margin:2px 0;">
+            <div style="color:{color};font-weight:700;font-size:0.85rem;">{label}</div>
+            <div style="color:#888;font-size:0.76rem;margin-top:2px;">{sublabel}</div>
+            </div>""",
+        unsafe_allow_html=True,
     )
-    return f'<div style="display:flex;gap:{gap};align-items:stretch;">{cells}</div>'
 
-def _section_label(text: str, color: str) -> str:
-    return f"""
-    <div style="
-        font-size:0.7rem;font-weight:600;letter-spacing:0.08em;
-        color:{color};text-transform:uppercase;margin-bottom:4px;
-    ">{text}</div>"""
+def _arrow(text: str = ""):
+    st.markdown(
+        f'<div style="text-align:center;color:#555;line-height:1;">'
+        f'{"<span style=\\'font-size:0.72rem;color:#777;\\'>" + text + "</span><br>" if text else ""}'
+        f"↓</div>",
+        unsafe_allow_html=True,
+    )
+
 
 C_ORCH    = "#2ca02c"
 C_INGEST  = "#1f77b4"
@@ -358,91 +342,67 @@ with tab_pipeline:
     st.header("Pipeline Architecture")
     st.caption("End-to-end data flow — GH Archive → Snowflake → dbt → Claude → Streamlit")
 
-    html_parts = []
+    # ── Two-column layout: hourly pipeline (left) | daily insights (right) ──
+    left, gap, right = st.columns([10, 1, 5])
 
-    # ── Orchestration header ──────────────────────────────────────
-    html_parts.append(_section_label("Orchestration", C_ORCH))
-    html_parts.append(_row(
-        _box("Airflow — gh_archive_pipeline DAG", "schedule: '5 * * * *' (every hour at :05)", C_ORCH),
-        _box("Airflow — gh_archive_daily_insights DAG", "schedule: '0 0 * * *' (daily midnight UTC)", C_AI),
-    ))
-    html_parts.append(_arrow())
+    with left:
+        st.markdown(f"<p style='color:{C_ORCH};font-size:0.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;'>Orchestration — Hourly</p>", unsafe_allow_html=True)
+        _node("Airflow · gh_archive_pipeline DAG", "schedule: '5 * * * *'  (every hour at :05)", C_ORCH)
+        _arrow()
+        _node("Task 1 · LambdaInvokeFunctionOperator", "invoke ingest_gh_archive (synchronous)", C_INGEST)
+        _arrow()
+        st.markdown(f"<p style='color:{C_INGEST};font-size:0.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;'>Ingestion</p>", unsafe_allow_html=True)
+        _node("AWS Lambda", "ingestion/lambda_function.py", C_INGEST)
+        _arrow()
+        _node("GH Archive · gharchive.org", "fetch hourly .json.gz  (~50–500 MB)", C_INGEST)
+        _arrow()
+        _node("S3 · gh-archive-raw-140767157729/raw/", "multipart streaming upload — never fully in memory", C_INGEST)
+        _arrow("COPY INTO via Storage Integration (IAM Role)")
+        st.markdown(f"<p style='color:{C_STORAGE};font-size:0.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;'>Storage</p>", unsafe_allow_html=True)
+        _node("Snowflake · RAW.raw_events", "append-only, ~40K events/hr", C_STORAGE)
+        _arrow()
+        st.markdown(f"<p style='color:{C_DBT};font-size:0.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;'>Transformation</p>", unsafe_allow_html=True)
+        t2, t3 = st.columns(2)
+        with t2:
+            _node("Task 2 · dbt run", "stg_gh_events → int_* → mart_*", C_DBT)
+        with t3:
+            _node("Task 3 · dbt test", "schema tests on all mart tables", C_DBT)
+        _arrow()
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            _node("mart_trending_repos", "7d rolling stars", C_DBT)
+        with m2:
+            _node("mart_contributor_retention", "cohort retention", C_DBT)
+        with m3:
+            _node("mart_language_trends", "category + WoW", C_DBT)
+        with m4:
+            _node("mart_label_usage", "PR labels", C_DBT)
 
-    # ── Task 1 / daily trigger row ────────────────────────────────
-    html_parts.append(_row(
-        _box("Task 1 · LambdaInvokeFunctionOperator", "invoke ingest_gh_archive (synchronous)", C_INGEST),
-        _box("Claude API · claude-sonnet-4-6", "fetch mart data → generate briefing", C_AI),
-    ))
-    html_parts.append(_arrow())
+    with right:
+        st.markdown(f"<p style='color:{C_AI};font-size:0.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;'>Orchestration — Daily</p>", unsafe_allow_html=True)
+        _node("Airflow · gh_archive_daily_insights DAG", "schedule: '0 0 * * *'  (daily midnight UTC)", C_AI)
+        _arrow()
+        _node("Claude API · claude-sonnet-4-6", "fetch mart data → generate briefing", C_AI)
+        _arrow()
+        _node("mart_daily_insights", "insight saved to Snowflake", C_STORAGE)
 
-    # ── Lambda detail / Claude output row ────────────────────────
-    html_parts.append(_section_label("Ingestion", C_INGEST))
-    html_parts.append(_row(
-        _box("AWS Lambda", "ingestion/lambda_function.py", C_INGEST),
-        _box("mart_daily_insights", "insight saved to Snowflake", C_STORAGE),
-    ))
-    html_parts.append(_arrow())
-
-    # ── GH Archive fetch ─────────────────────────────────────────
-    html_parts.append(_row(
-        _box("GH Archive · gharchive.org", "fetch hourly .json.gz (~50–500 MB)", C_INGEST),
-        _box("", "", "transparent"),
-    ))
-    html_parts.append(_arrow())
-
-    # ── S3 upload ────────────────────────────────────────────────
-    html_parts.append(_row(
-        _box("S3 · gh-archive-raw-140767157729/raw/", "multipart streaming upload — never fully in memory", C_INGEST),
-        _box("", "", "transparent"),
-    ))
-    html_parts.append(_arrow("COPY INTO via Storage Integration (IAM Role)"))
-
-    # ── Snowflake raw ────────────────────────────────────────────
-    html_parts.append(_section_label("Storage", C_STORAGE))
-    html_parts.append(_box("Snowflake · RAW.raw_events", "append-only, ~40K events/hr", C_STORAGE))
-    html_parts.append(_arrow())
-
-    # ── dbt tasks ────────────────────────────────────────────────
-    html_parts.append(_section_label("Transformation", C_DBT))
-    html_parts.append(_row(
-        _box("Task 2 · dbt run", "stg_gh_events → int_* → mart_*", C_DBT),
-        _box("Task 3 · dbt test", "schema tests on all mart tables", C_DBT),
-    ))
-    html_parts.append(_arrow())
-
-    # ── Mart tables ───────────────────────────────────────────────
-    html_parts.append(_row(
-        _box("mart_trending_repos", "top-100 repos · 7d rolling stars", C_DBT),
-        _box("mart_contributor_retention", "monthly cohort retention matrix", C_DBT),
-        _box("mart_language_trends", "daily category breakdown + WoW", C_DBT),
-        _box("mart_label_usage", "top-20 PR labels per day", C_DBT),
-    ))
-    html_parts.append(_arrow())
-
-    # ── Streamlit ────────────────────────────────────────────────
-    html_parts.append(_section_label("Serving", C_SERVE))
-    html_parts.append(_box(
+    # ── Streamlit at the bottom ──────────────────────────────────
+    st.divider()
+    st.markdown(f"<p style='color:{C_SERVE};font-size:0.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;'>Serving</p>", unsafe_allow_html=True)
+    _node(
         "Streamlit Live Demo ✅",
-        "gh-archive-dbt-jimin.streamlit.app · queries marts directly (TTL 5 min)",
+        "reads from all mart tables + mart_daily_insights · TTL 5 min",
         C_SERVE,
-    ))
-
+    )
     st.markdown(
-        '<div style="max-width:860px;margin:0 auto;">' + "".join(html_parts) + "</div>",
-        unsafe_allow_html=True,
+        "**Live demo:** [gh-archive-dbt-jimin.streamlit.app](https://gh-archive-dbt-jimin.streamlit.app/)",
     )
 
     st.divider()
 
     # ── Metrics row ───────────────────────────────────────────────
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Events ingested", "~40K / hr", "GH Archive")
-    m2.metric("Mart tables", "4", "dbt")
-    m3.metric("Pipeline cadence", "Hourly", "Airflow")
-    m4.metric("AI insights", "Daily", "Claude API")
-
-    st.markdown(
-        "**Live demo:** [gh-archive-dbt-jimin.streamlit.app]"
-        "(https://gh-archive-dbt-jimin.streamlit.app/)",
-        unsafe_allow_html=False,
-    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Events ingested", "~40K / hr", "GH Archive")
+    c2.metric("Mart tables", "4", "dbt")
+    c3.metric("Pipeline cadence", "Hourly", "Airflow")
+    c4.metric("AI insights", "Daily", "Claude API")
