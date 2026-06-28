@@ -21,7 +21,7 @@ Interactive Streamlit dashboard with five tabs: Daily Insights (Claude-generated
 
 ## Project Overview
 
-GH Archive records every public GitHub event — pushes, stars, forks, pull requests, issues, releases — at hourly granularity. This project ingests that raw firehose via AWS Lambda into Snowflake, deduplicates and lightly types it with dbt, then builds four analytical mart tables consumed by Looker Studio dashboards, a Streamlit app, and a Claude API insight generator.
+GH Archive records every public GitHub event — pushes, stars, forks, pull requests, issues, releases — at hourly granularity. This project ingests that raw firehose via AWS Lambda into Snowflake, deduplicates and lightly types it with dbt, then builds four analytical mart tables consumed by a Streamlit app and a Claude API insight generator.
 
 **What it produces:**
 
@@ -51,9 +51,9 @@ GH Archive records every public GitHub event — pushes, stars, forks, pull requ
                               ┌───────────────────────────────────────────────────┤
                               │                                                   │
                      ┌────────┴────────┐                               ┌──────────┴────────┐
-                     │   Claude API    │                               │   Looker Studio   │
-                     │ (daily midnight │                               │   + Streamlit     │
-                     │  insight gen.)  │                               │   (dashboards)    │
+                     │   Claude API    │                               │    Streamlit      │
+                     │ (daily midnight │                               │  (dashboards)     │
+                     │  insight gen.)  │                               │                   │
                      └─────────────────┘                               └───────────────────┘
 ```
 
@@ -232,7 +232,6 @@ dbt docs serve
 | S3 | Raw event staging area |
 | Airflow | Pipeline orchestration via Docker Compose (`airflow/`) |
 | Claude API | Daily trend insights at midnight (`insights/insights_generator.py`) |
-| Looker Studio | BI dashboard |
 | Streamlit | Interactive analytics app — [live demo](https://gh-archive-dbt-jimin.streamlit.app/) |
 
 ---
