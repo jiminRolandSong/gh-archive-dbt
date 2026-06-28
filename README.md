@@ -10,6 +10,13 @@ A production dbt project that transforms hourly GitHub event data from [GH Archi
 
 Interactive Streamlit dashboard with five tabs: Daily Insights (Claude-generated briefings), Trending Repos, Activity Trends, PR Label Usage, and a full Pipeline Architecture diagram.
 
+| | |
+|---|---|
+| ![Daily Insights](docs/screenshots/daily_insights.png) | ![Trending Repos](docs/screenshots/trending_repos.png) |
+| ![Activity Trends](docs/screenshots/activity_trends.png) | ![PR Label Usage](docs/screenshots/pr_label_usage.png) |
+
+![Pipeline](docs/screenshots/pipeline.png)
+
 ---
 
 ## Project Overview
@@ -326,19 +333,3 @@ The app opens at `http://localhost:8501` and provides five tabs:
 
 All Snowflake queries are cached for 300 seconds via `st.cache_data`. The sidebar shows the timestamp of the most recent event in `stg_gh_events`.
 
-### Screenshots
-
-**Daily Insights** — Claude-generated trend briefing with model metadata
-![Daily Insights](images/daily_insights.png)
-
-**Trending Repos** — Top-20 repos by 7-day rolling stars with date selector
-![Trending Repos](images/trending_repos.png)
-
-**Activity Trends** — Event count and WoW growth rate by category (last 30 days)
-![Activity Trends](images/activity_trends.png)
-
-**PR Label Usage** — Top-20 PR labels ranked by application count
-![PR Label Usage](images/pr_label_usage.png)
-
-**Pipeline** — End-to-end architecture from GH Archive to Streamlit
-![Pipeline](images/pipeline.png)
