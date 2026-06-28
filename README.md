@@ -314,7 +314,7 @@ pip install -r requirements.txt
 streamlit run streamlit_app.py
 ```
 
-The app opens at `http://localhost:8501` and provides four tabs:
+The app opens at `http://localhost:8501` and provides five tabs:
 
 | Tab | Contents |
 |-----|----------|
@@ -322,5 +322,23 @@ The app opens at `http://localhost:8501` and provides four tabs:
 | **Trending Repos** | Date-picker → top-20 repos from `mart_trending_repos` as a table + bar chart (7-day rolling stars) |
 | **Activity Trends** | Last-30-day event count & week-over-week growth rate line charts from `mart_language_trends` |
 | **PR Label Usage** | Top-20 PR labels from `mart_label_usage` as a horizontal bar chart |
+| **Pipeline** | End-to-end architecture diagram showing the full data flow |
 
 All Snowflake queries are cached for 300 seconds via `st.cache_data`. The sidebar shows the timestamp of the most recent event in `stg_gh_events`.
+
+### Screenshots
+
+**Daily Insights** — Claude-generated trend briefing with model metadata
+![Daily Insights](images/daily_insights.png)
+
+**Trending Repos** — Top-20 repos by 7-day rolling stars with date selector
+![Trending Repos](images/trending_repos.png)
+
+**Activity Trends** — Event count and WoW growth rate by category (last 30 days)
+![Activity Trends](images/activity_trends.png)
+
+**PR Label Usage** — Top-20 PR labels ranked by application count
+![PR Label Usage](images/pr_label_usage.png)
+
+**Pipeline** — End-to-end architecture from GH Archive to Streamlit
+![Pipeline](images/pipeline.png)
