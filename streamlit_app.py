@@ -16,11 +16,30 @@ st.set_page_config(
 
 # ── Snowflake connection ──────────────────────────────────────────
 
+def _snowflake_auth():
+    """Key-pair auth (service user, no MFA). Falls back to password if no key is configured.
+    Key sources: SNOWFLAKE_PRIVATE_KEY_B64 (base64 of PEM; for Streamlit Cloud secrets)
+    or SNOWFLAKE_PRIVATE_KEY_PATH (path to PEM file; for local/Airflow)."""
+    import base64
+    b64 = os.getenv("SNOWFLAKE_PRIVATE_KEY_B64")
+    path = os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
+    if not (b64 or path):
+        return {"password": os.getenv("SNOWFLAKE_PASSWORD")}
+    from cryptography.hazmat.primitives import serialization
+    pem = base64.b64decode(b64) if b64 else open(path, "rb").read()
+    key = serialization.load_pem_private_key(pem, password=None)
+    der = key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    return {"private_key": der}
+
 def get_connection():
     return snowflake.connector.connect(
         account=os.getenv("SNOWFLAKE_ACCOUNT"),
         user=os.getenv("SNOWFLAKE_USER"),
-        password=os.getenv("SNOWFLAKE_PASSWORD"),
+        **_snowflake_auth(),
         database=os.getenv("SNOWFLAKE_DATABASE", "GH_ARCHIVE"),
         schema=os.getenv("SNOWFLAKE_SCHEMA", "dbt_jimin_dev"),
         warehouse=os.getenv("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH"),

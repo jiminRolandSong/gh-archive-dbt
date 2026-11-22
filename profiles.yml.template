@@ -10,7 +10,7 @@
 #
 #   export SNOWFLAKE_ACCOUNT="xy12345.us-east-1"
 #   export SNOWFLAKE_USER="jimin"
-#   export SNOWFLAKE_PASSWORD="..."
+#   export SNOWFLAKE_PRIVATE_KEY_PATH="/abs/path/to/keys/rsa_key.p8"   # key-pair auth (service user)
 
 gh_archive:
   target: dev
@@ -19,7 +19,7 @@ gh_archive:
       type: snowflake
       account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
       user: "{{ env_var('SNOWFLAKE_USER') }}"
-      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
       role: TRANSFORMER
       database: GH_ARCHIVE
       warehouse: COMPUTE_WH
@@ -33,7 +33,7 @@ gh_archive:
       type: snowflake
       account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
       user: "{{ env_var('SNOWFLAKE_USER') }}"
-      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
       role: TRANSFORMER
       database: GH_ARCHIVE
       warehouse: COMPUTE_WH

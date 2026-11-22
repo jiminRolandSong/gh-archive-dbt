@@ -36,20 +36,20 @@ with DAG(
     bash_command="""
         mkdir -p /home/airflow/.dbt
         cat > /home/airflow/.dbt/profiles.yml << EOF
-        gh_archive:
-        target: dev
-        outputs:
-            dev:
-            type: snowflake
-            account: $SNOWFLAKE_ACCOUNT
-            user: $SNOWFLAKE_USER
-            password: $SNOWFLAKE_PASSWORD
-            role: TRANSFORMER
-            database: GH_ARCHIVE
-            warehouse: COMPUTE_WH
-            schema: dbt_jimin_dev
-            threads: 4
-        EOF
+gh_archive:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: $SNOWFLAKE_ACCOUNT
+      user: $SNOWFLAKE_USER
+      private_key_path: $SNOWFLAKE_PRIVATE_KEY_PATH
+      role: TRANSFORMER
+      database: GH_ARCHIVE
+      warehouse: COMPUTE_WH
+      schema: dbt_jimin_dev
+      threads: 4
+EOF
         cd /opt/airflow/dbt && /home/airflow/.local/bin/dbt run --select stg_gh_events+ --profiles-dir /home/airflow/.dbt --project-dir /opt/airflow/dbt
         """,
         )
@@ -60,20 +60,20 @@ with DAG(
     bash_command="""
         mkdir -p /home/airflow/.dbt
         cat > /home/airflow/.dbt/profiles.yml << EOF
-        gh_archive:
-        target: dev
-        outputs:
-            dev:
-            type: snowflake
-            account: $SNOWFLAKE_ACCOUNT
-            user: $SNOWFLAKE_USER
-            password: $SNOWFLAKE_PASSWORD
-            role: TRANSFORMER
-            database: GH_ARCHIVE
-            warehouse: COMPUTE_WH
-            schema: dbt_jimin_dev
-            threads: 4
-        EOF
+gh_archive:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: $SNOWFLAKE_ACCOUNT
+      user: $SNOWFLAKE_USER
+      private_key_path: $SNOWFLAKE_PRIVATE_KEY_PATH
+      role: TRANSFORMER
+      database: GH_ARCHIVE
+      warehouse: COMPUTE_WH
+      schema: dbt_jimin_dev
+      threads: 4
+EOF
         cd /opt/airflow/dbt && /home/airflow/.local/bin/dbt test --select stg_gh_events+ --profiles-dir /home/airflow/.dbt --project-dir /opt/airflow/dbt
         """,
         )

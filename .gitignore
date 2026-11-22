@@ -25,3 +25,6 @@ images/
 # Airflow
 airflow/logs/
 airflow/.env
+# Snowflake key-pair auth: never commit private keys
+keys/
+*.p8
